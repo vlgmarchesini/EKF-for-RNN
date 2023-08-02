@@ -1,12 +1,12 @@
 import torch
-import torch.optim as optim
-def calc_jacobian(model, cmds, x_k, y_hat, device, n_theta):
-    optimizer = optim.Adam(params=model.parameters())
 
-    # Calculating the gradient of f(x,theta),theta
+
+
+def calc_jacobian(model, cmds, x_k, y_hat, device, n_theta, optimizer):
+
     n = y_hat.shape[-1]
     df_dtheta = torch.zeros((n, n_theta)).to(device)
-    # print(f'estimates.shape= {estimates.shape}.', flush=True)
+
     for j, est in enumerate(y_hat[0, 0]):
         optimizer.zero_grad()
         est.backward(retain_graph=True)

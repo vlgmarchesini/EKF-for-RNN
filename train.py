@@ -4,27 +4,27 @@ from tqdm import tqdm
 from calc_jacobian import calc_jacobian
 import torch.optim as optim
 
-
-def train(model_x,
-          model_y,
-          dataloader,
-          x0,
-          device,
-          epochs,
-          Qx=1,
-          Qy=1,
-          Qthetax=1,
-          Qthetay=1,
-          Q0=0,
-          Px=1,
-          Pthetax=1,
-          Pthetay=1,
-          P0=0,
-          criterion=nn.MSELoss(),
-          print_rate=1000
-          ):
+def train_with_EKF(model_x,
+        model_y,
+        dataloader,
+        x0,
+        device,
+        epochs,
+        Qx=1,
+        Qy=1,
+        Qthetax=1,
+        Qthetay=1,
+        Q0=0,
+        Px=1,
+        Pthetax=1,
+        Pthetay=1,
+        P0=0,
+        criterion=nn.MSELoss(),
+        print_rate=1000):
 
     '''
+    Trains an RNN using EKF and PyTorch
+
     :param model_x: x(k+1) = f(x(k), u(k))
     :param model_y: y(k) = h(x(k), u(k))
     :param dataloader: torch dataloader with batch_size == 1, and should not be shuffled, unpacks u(k), y(k+1)
@@ -41,7 +41,7 @@ def train(model_x,
     :param P0:
     :param criterion:
     :param print_rate: number of iterations it prints the avg running loss
-    :return:
+
     '''
 
 
@@ -51,7 +51,7 @@ def train(model_x,
                            Qthetay, Qthetax,
                            Qx, Qy,
                            Q0,
-                           Px, Pthetax, P0,
+                           Px, Pthetax, Pthetay, P0,
                            criterion, x0)
 
     # Variables to track the running average of the loss
@@ -63,12 +63,12 @@ def train(model_x,
         for it, data in tqdm(enumerate(dataloader)):
             # Unpack the data
             if it == 0:
-                cmds, y_k = data
-                x0 = x0.to(device)
-                cmds = cmds.to(device)
-                y_k = y_k.to(device)
-                # First iteration
                 with torch.no_grad():
+                    cmds, y_k = data
+                    x0 = x0.to(device)
+                    cmds = cmds.to(device)
+                    y_k = y_k.to(device)
+                    # First iteration
                     x_hat_k_k1 = model_x(cmds, x0)  # next_estimatedStates = x(k+1|k)
             else:
                 # Forward pass of the model
@@ -77,8 +77,7 @@ def train(model_x,
                 y_k_1 = y_k_1.to(device)
 
                 P, x_hat_k1_k = update_par(model_x, model_y, y_k, x_hat_k_k1, P, cmds,
-                                               device,
-                                               Qy, Q, n_thetax, n_thetay)
+                                            device, Qy, Q, n_thetax, n_thetay, nx, ny)
 
                 y_k = y_k_1
                 x_hat_k_k1 = x_hat_k1_k
@@ -101,7 +100,7 @@ def initialize_parameters(model_x, model_y,
                            Qthetay, Qthetax,
                            Qx, Qy,
                            Q0,
-                           Px, Pthetax, P0,
+                           Px, Pthetax, Pthetay, P0,
                            criterion, x0):
     '''
     Initializes Q, P, asserts sizes and move matrices, criterion and models to device.
@@ -125,16 +124,11 @@ def initialize_parameters(model_x, model_y,
         raise Exception("Batchsize must be 1 for EKF")
 
     nx = x0.shape[-1]
-    if hasattr(Qx, "__len__"):
-        if len(Qx) != nx:
-            raise Exception("Mismatch between the size of Qx and x0")
-    else:
-        Qx = Qx * torch.eye(nx)
 
     for dt in dataloader:
-        y0, u0, y1 = dt
+        u0, y1 = dt
         break
-    ny = y0.shape[-1]
+    ny = y1.shape[-1]
     if hasattr(Qy, "__len__"):
         if len(Qy) != ny:
             raise Exception("Mismatch between the size of Qx and x0")
@@ -149,12 +143,6 @@ def initialize_parameters(model_x, model_y,
     par_per_item = [p.numel() for p in pars]
     n_thetay = sum(par_per_item)
 
-    if hasattr(Qthetay, "__len__"):
-        if len(Qthetay) != n_thetay:
-            raise Exception("Mismatch between the size of Qthetay and the number of parameters of model_y")
-    else:
-        Qthetay = Qthetay*torch.eye(n_thetay)
-
     if hasattr(Q0, "__len__"):
         if len(Q0) != (nx + n_thetax + n_thetay):
             raise Exception("Mismatch between the size of Q0 and (nx + n_thetax + n_thetay)")
@@ -164,15 +152,24 @@ def initialize_parameters(model_x, model_y,
                 raise Exception("Mismatch between the size of Qx and x0")
         else:
             Qx = Qx * torch.eye(nx)
+
+
         if hasattr(Qthetax, "__len__"):
             if len(Qthetax) != n_thetax:
                 raise Exception("Mismatch between the size of Qthetax and n_thetax")
         else:
             Qthetax = Qthetax * torch.eye(n_thetax)
-        Q0 = (torch.zeros(nx + n_thetax + n_thetay))
-        Q0[0:nx, 0:nx] = Qx
-        Q0[nx:, nx:] = Qthetax
 
+        if hasattr(Qthetay, "__len__"):
+            if len(Qthetay) != n_thetay:
+                raise Exception("Mismatch between the size of Qthetay and the number of parameters of model_y")
+        else:
+            Qthetay = Qthetay * torch.eye(n_thetay)
+
+        Q0 = torch.zeros((nx + n_thetax + n_thetay, nx + n_thetax + n_thetay))
+        Q0[0:nx, 0:nx] = Qx
+        Q0[nx:nx + n_thetax, nx:nx + n_thetax] = Qthetax
+        Q0[nx + n_thetax:, nx + n_thetax:] = Qthetay
 
     if hasattr(P0, "__len__"):
         if len(P0) != (nx + n_thetax + n_thetay):
@@ -188,9 +185,16 @@ def initialize_parameters(model_x, model_y,
                 raise Exception("Mismatch between the size of Pthetax and n_thetax")
         else:
             Pthetax = Pthetax * torch.eye(n_thetax)
-        P0 = (torch.zeros(nx + n_thetax + n_thetay))
+        if hasattr(Pthetay, "__len__"):
+            if len(Pthetay) != n_thetay:
+                raise Exception("Mismatch between the size of Pthetax and n_thetax")
+        else:
+            Pthetay = Pthetay * torch.eye(n_thetay)
+
+        P0 = torch.zeros((nx + n_thetax + n_thetay, nx + n_thetax + n_thetay))
         P0[0:nx, 0:nx] = Px
-        P0[nx:, nx:] = Pthetax
+        P0[nx:nx + n_thetax, nx:nx + n_thetax] = Pthetax
+        P0[nx + n_thetax:, nx + n_thetax:] = Pthetay
 
 
 
@@ -206,14 +210,14 @@ def initialize_parameters(model_x, model_y,
 
 
 def update_par(model_x, model_y, y_k, x_hat_k_k1, P, u_k,
-               device, Qy, Q, optimizer, n_thetax, n_thetay, nx, ny
+               device, Qy, Q, n_thetax, n_thetay, nx, ny
                ):
 
 
-    C = (x_hat_k_k1, u_k, model_y, ny, device, n_thetax, n_thetay)
+    C = buildC(x_hat_k_k1, u_k, model_y, ny, device, n_thetax, n_thetay)
     with torch.no_grad():
 
-        err = (y_k - model_y(x_hat_k_k1)).flatten()
+        err = (y_k - model_y(u_k, x_hat_k_k1)).flatten()
         x_hat_k_k = torch.empty(x_hat_k_k1.shape).to(device)
         M1 = torch.matmul(torch.matmul(C, P), C.T)
         M = torch.inverse(M1 + Qy)
@@ -252,7 +256,8 @@ def update_par(model_x, model_y, y_k, x_hat_k_k1, P, u_k,
 
     x_hat_k1_k = model_x(u_k, x_hat_k_k)
     #print(x_hat_k1_k.shape)
-    dfdx, dfdthetax = calc_jacobian(model_x, u_k, x_hat_k_k, x_hat_k1_k, device, n_thetax)
+    optimizer = optim.Adam(params=model_x.parameters())
+    dfdx, dfdthetax = calc_jacobian(model_x, u_k, x_hat_k_k, x_hat_k1_k, device, n_thetax, optimizer)
 
     with torch.no_grad():
         A = torch.zeros((nx + n_thetax + n_thetay, nx + n_thetax + n_thetay))  # .to(device)
@@ -272,8 +277,9 @@ def update_par(model_x, model_y, y_k, x_hat_k_k1, P, u_k,
     return P, x_hat_k1_k
 
 def buildC(x_hat_k_k1, u_k, model_y, ny, device, n_thetax, n_thetay):
+    optimizer = optim.Adam(params=model_y.parameters())
     y_hat_1 = model_y(u_k, x_hat_k_k1)
-    dfy_dx, dfydthetay = calc_jacobian(model_y, u_k, x_hat_k_k1, y_hat_1, device, n_thetay)
+    dfy_dx, dfydthetay = calc_jacobian(model_y, u_k, x_hat_k_k1, y_hat_1, device, n_thetay, optimizer)
     Zeros = torch.zeros((ny, n_thetax)).to(device)
     C = torch.cat((dfy_dx.to(device), Zeros, dfydthetay.to(device)), dim=1)
     return C
