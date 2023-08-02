@@ -201,6 +201,8 @@ def initialize_parameters(model_x, model_y,
     # Move model and criterion to the device
     model_x = model_x.to(device)
     model_y = model_y.to(device)
+    model_x.train()
+    model_y.train()
     criterion = criterion.to(device)
     P0 = P0.to(device)
     Q0 = Qx.to(device)
@@ -278,8 +280,10 @@ def update_par(model_x, model_y, y_k, x_hat_k_k1, P, u_k,
 
 def buildC(x_hat_k_k1, u_k, model_y, ny, device, n_thetax, n_thetay):
     optimizer = optim.Adam(params=model_y.parameters())
+    optimizer.zero_grad()
     y_hat_1 = model_y(u_k, x_hat_k_k1)
     dfy_dx, dfydthetay = calc_jacobian(model_y, u_k, x_hat_k_k1, y_hat_1, device, n_thetay, optimizer)
+
     Zeros = torch.zeros((ny, n_thetax)).to(device)
     C = torch.cat((dfy_dx.to(device), Zeros, dfydthetay.to(device)), dim=1)
     return C
