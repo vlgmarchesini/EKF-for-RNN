@@ -84,7 +84,6 @@ def train_with_EKF(model_x,
 
                 with torch.no_grad():
                     loss = criterion(y_k, model_y(cmds, x_hat_k_k1))
-
                     running_loss += loss
                     running_samples += 1
 

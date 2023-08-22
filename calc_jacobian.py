@@ -3,7 +3,6 @@ import torch
 
 
 def calc_jacobian(model, cmds, x_k, y_hat, device, n_theta, optimizer):
-
     n = y_hat.shape[-1]
     df_dtheta = torch.zeros((n, n_theta)).to(device)
     print(f'y_hat.shape={y_hat.shape}')
